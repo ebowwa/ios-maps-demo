@@ -18,8 +18,41 @@ struct ContentView: View {
     @State private var showUserLocation = true
     @State private var locationManager = CLLocationManager()
     @State private var userLocation: CLLocationCoordinate2D?
+    @State private var mapMode: MapMode = .standard
+    
+    enum MapMode {
+        case standard
+        case wifi
+    }
     
     var body: some View {
+        ZStack {
+            if mapMode == .wifi {
+                WiFiMapView()
+            } else {
+                standardMapView
+            }
+            
+            VStack {
+                HStack {
+                    Picker("Map Mode", selection: $mapMode) {
+                        Label("Standard", systemImage: "map").tag(MapMode.standard)
+                        Label("WiFi", systemImage: "wifi").tag(MapMode.wifi)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding()
+                    .background(.regularMaterial)
+                    .cornerRadius(10)
+                }
+                .padding()
+                
+                Spacer()
+            }
+        }
+    }
+    
+    @ViewBuilder
+    var standardMapView: some View {
         Map(position: $position, selection: $selectedResult) {
             if showUserLocation {
                 UserAnnotation()
