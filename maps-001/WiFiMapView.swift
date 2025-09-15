@@ -45,8 +45,8 @@ struct WiFiMapView: View {
                     
                     // Add heatmap overlay for each spot
                     MapCircle(center: spot.coordinate, radius: 50)
-                        .foregroundStyle(Color(spot.rating > 0.7 ? "green" : spot.rating > 0.4 ? "yellow" : "red").opacity(0.3))
-                        .stroke(Color(spot.rating > 0.7 ? "green" : spot.rating > 0.4 ? "yellow" : "red").opacity(0.5), lineWidth: 1)
+                        .foregroundStyle((spot.rating > 0.7 ? Color.green : spot.rating > 0.4 ? Color.yellow : Color.red).opacity(0.3))
+                        .stroke((spot.rating > 0.7 ? Color.green : spot.rating > 0.4 ? Color.yellow : Color.red).opacity(0.5), lineWidth: 1)
                 }
             }
             .mapControls {
@@ -79,7 +79,7 @@ struct WiFiMapView: View {
                 
                 if let selectedSpot = selectedSpot {
                     WiFiSpotDetailCard(spot: selectedSpot, onClose: {
-                        selectedSpot = nil
+                        self.selectedSpot = nil
                     })
                     .transition(.move(edge: .bottom))
                 }
@@ -111,7 +111,7 @@ struct WiFiSpotMarker: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(Color(spot.rating > 0.7 ? "green" : spot.rating > 0.4 ? "yellow" : "red"))
+                .fill(spot.rating > 0.7 ? Color.green : spot.rating > 0.4 ? Color.yellow : Color.red)
                 .frame(width: 30, height: 30)
             
             Image(systemName: spot.venue.type.icon)
@@ -157,7 +157,7 @@ struct WiFiSpotDetailCard: View {
                 
                 VStack {
                     Image(systemName: "wifi")
-                        .foregroundColor(Color(spot.reliability > 70 ? "green" : spot.reliability > 40 ? "yellow" : "red"))
+                        .foregroundColor(spot.reliability > 70 ? Color.green : spot.reliability > 40 ? Color.yellow : Color.red)
                     Text("\(Int(spot.reliability))%")
                         .font(.caption)
                     Text("Reliability")
@@ -280,19 +280,26 @@ struct WiFiFilterView: View {
 
 struct WiFiSpeedTestView: View {
     let onComplete: (WiFiMeasurement) -> Void
-    @State private var isTesting = false
-    @State private var downloadSpeed: Double = 0
-    @State private var uploadSpeed: Double = 0
-    @State private var ping: Double = 0
+    @StateObject private var speedTest = NetworkSpeedTest()
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
         NavigationView {
             VStack(spacing: 30) {
-                if isTesting {
-                    ProgressView("Testing WiFi Speed...")
-                        .progressViewStyle(CircularProgressViewStyle())
-                        .scaleEffect(1.5)
+                if speedTest.isTestRunning {
+                    VStack(spacing: 20) {
+                        ProgressView("Testing WiFi Speed...")
+                            .progressViewStyle(CircularProgressViewStyle())
+                            .scaleEffect(1.5)
+                        
+                        ProgressView(value: speedTest.testProgress)
+                            .progressViewStyle(.linear)
+                            .padding(.horizontal)
+                        
+                        Text("\(Int(speedTest.testProgress * 100))%")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 } else {
                     VStack(spacing: 20) {
                         HStack(spacing: 30) {
@@ -300,7 +307,7 @@ struct WiFiSpeedTestView: View {
                                 Image(systemName: "arrow.down.circle.fill")
                                     .font(.largeTitle)
                                     .foregroundColor(.blue)
-                                Text("\(String(format: "%.1f", downloadSpeed))")
+                                Text("\(String(format: "%.1f", speedTest.downloadSpeed))")
                                     .font(.title)
                                 Text("Mbps")
                                     .font(.caption)
@@ -310,7 +317,7 @@ struct WiFiSpeedTestView: View {
                                 Image(systemName: "arrow.up.circle.fill")
                                     .font(.largeTitle)
                                     .foregroundColor(.green)
-                                Text("\(String(format: "%.1f", uploadSpeed))")
+                                Text("\(String(format: "%.1f", speedTest.uploadSpeed))")
                                     .font(.title)
                                 Text("Mbps")
                                     .font(.caption)
@@ -320,7 +327,7 @@ struct WiFiSpeedTestView: View {
                                 Image(systemName: "timer")
                                     .font(.largeTitle)
                                     .foregroundColor(.orange)
-                                Text("\(Int(ping))")
+                                Text("\(Int(speedTest.latency))")
                                     .font(.title)
                                 Text("ms")
                                     .font(.caption)
@@ -333,6 +340,7 @@ struct WiFiSpeedTestView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
+                        .disabled(speedTest.isTestRunning)
                     }
                 }
             }
@@ -350,28 +358,9 @@ struct WiFiSpeedTestView: View {
     }
     
     func runSpeedTest() {
-        isTesting = true
-        
-        // Simulate speed test - in production, use actual speed test API
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            downloadSpeed = Double.random(in: 10...100)
-            uploadSpeed = Double.random(in: 5...50)
-            ping = Double.random(in: 10...50)
-            isTesting = false
-            
-            // Create measurement
-            let measurement = WiFiMeasurement(
-                timestamp: Date(),
-                downloadSpeed: downloadSpeed,
-                uploadSpeed: uploadSpeed,
-                ping: ping,
-                signalStrength: Double.random(in: 60...100),
-                exactLocation: nil,
-                seatDescription: nil,
-                userId: "current-user"
-            )
-            
+        speedTest.runSpeedTest { measurement in
             onComplete(measurement)
+            dismiss()
         }
     }
 }

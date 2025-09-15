@@ -18,36 +18,65 @@ struct ContentView: View {
     @State private var showUserLocation = true
     @State private var locationManager = CLLocationManager()
     @State private var userLocation: CLLocationCoordinate2D?
-    @State private var mapMode: MapMode = .standard
-    
-    enum MapMode {
-        case standard
-        case wifi
-    }
+    @State private var showTutorial = false
+    @State private var showDeveloperTools = false
+    @AppStorage("hasCompletedTutorial") private var hasCompletedTutorial = false
+    @AppStorage("preferredMapMode") private var preferredMapMode = "wifi"
     
     var body: some View {
         ZStack {
-            if mapMode == .wifi {
+            // Main map view - WiFi mode is default
+            if preferredMapMode == "wifi" {
                 WiFiMapView()
+                    .onAppear {
+                        if !hasCompletedTutorial {
+                            showTutorial = true
+                        }
+                    }
             } else {
                 standardMapView
             }
             
+            // Floating action buttons
             VStack {
                 HStack {
-                    Picker("Map Mode", selection: $mapMode) {
-                        Label("Standard", systemImage: "map").tag(MapMode.standard)
-                        Label("WiFi", systemImage: "wifi").tag(MapMode.wifi)
+                    // Mode switcher (only show after tutorial)
+                    if hasCompletedTutorial {
+                        Menu {
+                            Button(action: { preferredMapMode = "wifi" }) {
+                                Label("WiFi Map", systemImage: "wifi")
+                            }
+                            Button(action: { preferredMapMode = "standard" }) {
+                                Label("Standard Map", systemImage: "map")
+                            }
+                            Divider()
+                            Button(action: { showDeveloperTools = true }) {
+                                Label("Developer Tools", systemImage: "hammer")
+                            }
+                            Button(action: { showTutorial = true }) {
+                                Label("Tutorial", systemImage: "questionmark.circle")
+                            }
+                        } label: {
+                            Image(systemName: preferredMapMode == "wifi" ? "wifi" : "map")
+                                .font(.title2)
+                                .frame(width: 44, height: 44)
+                                .background(.regularMaterial)
+                                .clipShape(Circle())
+                        }
                     }
-                    .pickerStyle(.segmented)
-                    .padding()
-                    .background(.regularMaterial)
-                    .cornerRadius(10)
+                    
+                    Spacer()
                 }
                 .padding()
                 
                 Spacer()
             }
+        }
+        .fullScreenCover(isPresented: $showTutorial) {
+            TutorialView(showTutorial: $showTutorial)
+        }
+        .sheet(isPresented: $showDeveloperTools) {
+            DeveloperToolsView()
         }
     }
     

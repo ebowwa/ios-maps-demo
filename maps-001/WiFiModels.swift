@@ -9,12 +9,20 @@ import Foundation
 import CoreLocation
 import MapKit
 
-struct WiFiSpot: Identifiable, Equatable {
+struct WiFiSpot: Identifiable, Hashable {
     let id = UUID()
     let coordinate: CLLocationCoordinate2D
     let venue: Venue
     let measurements: [WiFiMeasurement]
     let amenities: Set<Amenity>
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: WiFiSpot, rhs: WiFiSpot) -> Bool {
+        lhs.id == rhs.id
+    }
     
     var averageSpeed: Double {
         guard !measurements.isEmpty else { return 0 }
@@ -31,7 +39,7 @@ struct WiFiSpot: Identifiable, Equatable {
     }
 }
 
-struct Venue: Identifiable, Equatable {
+struct Venue: Identifiable, Hashable {
     let id = UUID()
     let name: String
     let type: VenueType
@@ -40,9 +48,17 @@ struct Venue: Identifiable, Equatable {
     let hasPassword: Bool
     let passwordHint: String?
     let floorPlan: FloorPlan?
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: Venue, rhs: Venue) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
-struct WiFiMeasurement: Identifiable {
+struct WiFiMeasurement: Identifiable, Hashable {
     let id = UUID()
     let timestamp: Date
     let downloadSpeed: Double // Mbps
@@ -52,18 +68,34 @@ struct WiFiMeasurement: Identifiable {
     let exactLocation: CLLocationCoordinate2D?
     let seatDescription: String?
     let userId: String
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: WiFiMeasurement, rhs: WiFiMeasurement) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
-struct FloorPlan {
+struct FloorPlan: Hashable {
     let imageURL: URL?
     let seatLocations: [SeatLocation]
 }
 
-struct SeatLocation: Identifiable {
+struct SeatLocation: Identifiable, Hashable {
     let id = UUID()
     let name: String
     let coordinate: CLLocationCoordinate2D
     let measurements: [WiFiMeasurement]
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: SeatLocation, rhs: SeatLocation) -> Bool {
+        lhs.id == rhs.id
+    }
     
     var quality: WiFiQuality {
         guard !measurements.isEmpty else { return .unknown }
@@ -79,7 +111,7 @@ struct SeatLocation: Identifiable {
     }
 }
 
-struct DayHours {
+struct DayHours: Hashable {
     let dayOfWeek: Int // 1-7
     let openTime: Date?
     let closeTime: Date?
