@@ -282,6 +282,8 @@ struct WiFiSpeedTestView: View {
     let onComplete: (WiFiMeasurement) -> Void
     @StateObject private var speedTest = NetworkSpeedTest()
     @Environment(\.dismiss) var dismiss
+    @State private var testCompleted = false
+    @State private var lastMeasurement: WiFiMeasurement?
     
     var body: some View {
         NavigationView {
@@ -334,13 +336,34 @@ struct WiFiSpeedTestView: View {
                             }
                         }
                         
-                        Button(action: runSpeedTest) {
-                            Label("Start Test", systemImage: "play.fill")
-                                .frame(maxWidth: .infinity)
+                        if testCompleted, let measurement = lastMeasurement {
+                            Text("Test Complete!")
+                                .font(.headline)
+                                .foregroundColor(.green)
+                            
+                            HStack(spacing: 15) {
+                                Button(action: runSpeedTest) {
+                                    Label("Test Again", systemImage: "arrow.clockwise")
+                                }
+                                .buttonStyle(.bordered)
+                                
+                                Button(action: {
+                                    onComplete(measurement)
+                                    dismiss()
+                                }) {
+                                    Label("Save Results", systemImage: "checkmark.circle.fill")
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                        } else {
+                            Button(action: runSpeedTest) {
+                                Label("Start Test", systemImage: "play.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .disabled(speedTest.isTestRunning)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .disabled(speedTest.isTestRunning)
                     }
                 }
             }
@@ -358,9 +381,11 @@ struct WiFiSpeedTestView: View {
     }
     
     func runSpeedTest() {
+        testCompleted = false
         speedTest.runSpeedTest { measurement in
-            onComplete(measurement)
-            dismiss()
+            lastMeasurement = measurement
+            testCompleted = true
+            // Don't auto-dismiss, let user see results
         }
     }
 }
