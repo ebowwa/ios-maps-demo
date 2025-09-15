@@ -20,6 +20,10 @@ struct WiFiMapView: View {
     @State private var showOnlyOpen = false
     @State private var showSpeedTest = false
     @State private var isContributing = false
+    @State private var droppedPin: CLLocationCoordinate2D?
+    @State private var showPinOptions = false
+    @State private var selectedFloor = 1
+    @State private var buildingName = ""
     
     var filteredSpots: [WiFiSpot] {
         wifiManager.spots.filter { spot in
@@ -31,31 +35,67 @@ struct WiFiMapView: View {
     
     var body: some View {
         ZStack {
-            Map(position: $position, selection: $selectedSpot) {
-                UserAnnotation()
-                
-                ForEach(filteredSpots) { spot in
-                    Annotation(spot.venue.name, coordinate: spot.coordinate) {
-                        WiFiSpotMarker(spot: spot)
-                            .onTapGesture {
-                                selectedSpot = spot
-                            }
-                    }
-                    .tag(spot)
+            MapReader { proxy in
+                Map(position: $position, selection: $selectedSpot) {
+                    UserAnnotation()
                     
-                    // Add heatmap overlay for each spot
-                    MapCircle(center: spot.coordinate, radius: 50)
-                        .foregroundStyle((spot.rating > 0.7 ? Color.green : spot.rating > 0.4 ? Color.yellow : Color.red).opacity(0.3))
-                        .stroke((spot.rating > 0.7 ? Color.green : spot.rating > 0.4 ? Color.yellow : Color.red).opacity(0.5), lineWidth: 1)
+                    // Show dropped pin for new measurement
+                    if let droppedPin = droppedPin {
+                        Annotation("New Measurement", coordinate: droppedPin) {
+                            Image(systemName: "mappin.circle.fill")
+                                .font(.title)
+                                .foregroundColor(.blue)
+                                .background(Circle().fill(.white).frame(width: 30, height: 30))
+                        }
+                    }
+                    
+                    ForEach(filteredSpots) { spot in
+                        Annotation(spot.venue.name, coordinate: spot.coordinate) {
+                            WiFiSpotMarker(spot: spot)
+                                .onTapGesture {
+                                    selectedSpot = spot
+                                }
+                        }
+                        .tag(spot)
+                        
+                        // Add heatmap overlay for each spot
+                        MapCircle(center: spot.coordinate, radius: 50)
+                            .foregroundStyle((spot.rating > 0.7 ? Color.green : spot.rating > 0.4 ? Color.yellow : Color.red).opacity(0.3))
+                            .stroke((spot.rating > 0.7 ? Color.green : spot.rating > 0.4 ? Color.yellow : Color.red).opacity(0.5), lineWidth: 1)
+                    }
                 }
-            }
-            .mapControls {
-                MapUserLocationButton()
-                MapCompass()
-                MapScaleView()
+                .onLongPressGesture(minimumDuration: 0.5) { location in
+                    // Convert screen location to map coordinate
+                    if let coordinate = proxy.convert(location, from: .local) {
+                        droppedPin = coordinate
+                        showPinOptions = true
+                    }
+                }
+                .mapControls {
+                    MapUserLocationButton()
+                    MapCompass()
+                    MapScaleView()
+                }
             }
             
             VStack {
+                // Instruction banner
+                if droppedPin == nil {
+                    HStack {
+                        Image(systemName: "hand.tap.fill")
+                            .foregroundColor(.blue)
+                        Text("Long press on map to add WiFi measurement")
+                            .font(.caption)
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                    .background(.thinMaterial)
+                    .cornerRadius(8)
+                    .padding(.horizontal)
+                    .padding(.top)
+                }
+                
                 HStack {
                     Button(action: { showFilters.toggle() }) {
                         Label("Filters", systemImage: "line.3.horizontal.decrease.circle.fill")
@@ -66,8 +106,12 @@ struct WiFiMapView: View {
                     
                     Spacer()
                     
-                    Button(action: { showSpeedTest = true }) {
-                        Label("Test WiFi", systemImage: "wifi")
+                    Button(action: { 
+                        // Test at current location
+                        droppedPin = nil
+                        showSpeedTest = true 
+                    }) {
+                        Label("Test Here", systemImage: "location.fill")
                             .padding()
                             .background(.regularMaterial)
                             .cornerRadius(10)
@@ -94,10 +138,31 @@ struct WiFiMapView: View {
             )
         }
         .sheet(isPresented: $showSpeedTest) {
-            WiFiSpeedTestView(onComplete: { measurement in
-                wifiManager.addMeasurement(measurement)
-                showSpeedTest = false
-            })
+            WiFiSpeedTestView(
+                coordinate: droppedPin,
+                floor: selectedFloor,
+                buildingName: buildingName,
+                onComplete: { measurement in
+                    wifiManager.addMeasurement(measurement)
+                    showSpeedTest = false
+                    droppedPin = nil // Clear the pin after saving
+                }
+            )
+        }
+        .sheet(isPresented: $showPinOptions) {
+            PinOptionsView(
+                coordinate: droppedPin ?? CLLocationCoordinate2D(),
+                floor: $selectedFloor,
+                buildingName: $buildingName,
+                onTestWiFi: {
+                    showPinOptions = false
+                    showSpeedTest = true
+                },
+                onCancel: {
+                    showPinOptions = false
+                    droppedPin = nil
+                }
+            )
         }
         .onAppear {
             wifiManager.loadNearbySpots()
@@ -279,11 +344,16 @@ struct WiFiFilterView: View {
 }
 
 struct WiFiSpeedTestView: View {
+    let coordinate: CLLocationCoordinate2D?
+    let floor: Int
+    let buildingName: String
     let onComplete: (WiFiMeasurement) -> Void
     @StateObject private var speedTest = NetworkSpeedTest()
     @Environment(\.dismiss) var dismiss
     @State private var testCompleted = false
     @State private var lastMeasurement: WiFiMeasurement?
+    @State private var autoSaveTimer: Timer?
+    @State private var seatDescription = ""
     
     var body: some View {
         NavigationView {
@@ -337,23 +407,48 @@ struct WiFiSpeedTestView: View {
                         }
                         
                         if testCompleted, let measurement = lastMeasurement {
-                            Text("Test Complete!")
-                                .font(.headline)
-                                .foregroundColor(.green)
-                            
-                            HStack(spacing: 15) {
-                                Button(action: runSpeedTest) {
-                                    Label("Test Again", systemImage: "arrow.clockwise")
-                                }
-                                .buttonStyle(.bordered)
+                            VStack(spacing: 15) {
+                                Text("Auto-saving in 3 seconds...")
+                                    .font(.headline)
+                                    .foregroundColor(.green)
                                 
-                                Button(action: {
-                                    onComplete(measurement)
-                                    dismiss()
-                                }) {
-                                    Label("Save Results", systemImage: "checkmark.circle.fill")
+                                // Location info
+                                if let coord = coordinate {
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        if !buildingName.isEmpty {
+                                            Text("Building: \(buildingName)")
+                                                .font(.caption)
+                                        }
+                                        Text("Floor: \(floor)")
+                                            .font(.caption)
+                                        Text("Lat: \(String(format: "%.6f", coord.latitude))")
+                                            .font(.caption2)
+                                        Text("Lon: \(String(format: "%.6f", coord.longitude))")
+                                            .font(.caption2)
+                                    }
+                                    .padding(.horizontal)
+                                    .padding(.vertical, 8)
+                                    .background(Color.gray.opacity(0.1))
+                                    .cornerRadius(8)
                                 }
-                                .buttonStyle(.borderedProminent)
+                                
+                                TextField("Add location details (optional)", text: $seatDescription)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.caption)
+                                
+                                HStack(spacing: 15) {
+                                    Button(action: runSpeedTest) {
+                                        Label("Test Again", systemImage: "arrow.clockwise")
+                                    }
+                                    .buttonStyle(.bordered)
+                                    
+                                    Button(action: {
+                                        saveAndDismiss()
+                                    }) {
+                                        Label("Save Now", systemImage: "checkmark.circle.fill")
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                }
                             }
                         } else {
                             Button(action: runSpeedTest) {
@@ -382,16 +477,45 @@ struct WiFiSpeedTestView: View {
     
     func runSpeedTest() {
         testCompleted = false
+        // Cancel any existing timer
+        autoSaveTimer?.invalidate()
+        
         speedTest.runSpeedTest { measurement in
-            lastMeasurement = measurement
+            // Update measurement with location data
+            var updatedMeasurement = measurement
+            updatedMeasurement.exactLocation = coordinate.map { SeatLocation(
+                latitude: $0.latitude,
+                longitude: $0.longitude,
+                floor: floor,
+                section: buildingName.isEmpty ? nil : buildingName,
+                seatNumber: seatDescription.isEmpty ? nil : seatDescription
+            )}
+            updatedMeasurement.seatDescription = seatDescription.isEmpty ? "Floor \(floor)" : seatDescription
+            
+            lastMeasurement = updatedMeasurement
             testCompleted = true
-            // Don't auto-dismiss, let user see results
+            
+            // Auto-save after 3 seconds
+            autoSaveTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { _ in
+                saveAndDismiss()
+            }
         }
+    }
+    
+    func saveAndDismiss() {
+        autoSaveTimer?.invalidate()
+        if var measurement = lastMeasurement {
+            // Update with final seat description if changed
+            measurement.seatDescription = seatDescription.isEmpty ? "Floor \(floor)" : seatDescription
+            onComplete(measurement)
+        }
+        dismiss()
     }
 }
 
 class WiFiSpotManager: ObservableObject {
     @Published var spots: [WiFiSpot] = []
+    @Published var userMeasurements: [WiFiMeasurement] = []
     
     func loadNearbySpots() {
         // Simulate loading spots - in production, fetch from backend
@@ -399,7 +523,45 @@ class WiFiSpotManager: ObservableObject {
     }
     
     func addMeasurement(_ measurement: WiFiMeasurement) {
-        // Add new measurement to nearest spot
+        // Store user measurement
+        userMeasurements.append(measurement)
+        
+        // Find or create spot for this location
+        if let location = measurement.exactLocation {
+            let coordinate = CLLocationCoordinate2D(
+                latitude: location.latitude,
+                longitude: location.longitude
+            )
+            
+            // Check if there's an existing spot nearby (within 50 meters)
+            if let existingSpotIndex = spots.firstIndex(where: { spot in
+                let distance = CLLocation(latitude: spot.coordinate.latitude, longitude: spot.coordinate.longitude)
+                    .distance(from: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude))
+                return distance < 50
+            }) {
+                // Add to existing spot
+                spots[existingSpotIndex].measurements.append(measurement)
+            } else {
+                // Create new spot
+                let newSpot = WiFiSpot(
+                    coordinate: coordinate,
+                    venue: Venue(
+                        name: location.section ?? "User Added Location",
+                        type: .other,
+                        address: "Floor \(location.floor)",
+                        hours: [],
+                        hasPassword: false,
+                        passwordHint: nil,
+                        floorPlan: nil
+                    ),
+                    measurements: [measurement],
+                    amenities: []
+                )
+                spots.append(newSpot)
+            }
+        }
+        
+        print("Measurement saved: \(measurement.downloadSpeed) Mbps at \(measurement.seatDescription ?? "unknown location")")
     }
     
     private func generateSampleSpots() -> [WiFiSpot] {
@@ -438,6 +600,87 @@ class WiFiSpotManager: ObservableObject {
                 amenities: [.powerOutlets, .quietSpace, .printer, .airConditioning]
             )
         ]
+    }
+}
+
+// Pin Options View for location selection
+struct PinOptionsView: View {
+    let coordinate: CLLocationCoordinate2D
+    @Binding var floor: Int
+    @Binding var buildingName: String
+    let onTestWiFi: () -> Void
+    let onCancel: () -> Void
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                Text("📍 New WiFi Measurement")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .padding(.top)
+                
+                VStack(alignment: .leading, spacing: 15) {
+                    // Building name
+                    VStack(alignment: .leading) {
+                        Text("Building/Venue Name")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        TextField("e.g., Starbucks Main St", text: $buildingName)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    
+                    // Floor selector
+                    VStack(alignment: .leading) {
+                        Text("Floor")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Picker("Floor", selection: $floor) {
+                            Text("Basement").tag(-1)
+                            Text("Ground").tag(0)
+                            ForEach(1..<10) { level in
+                                Text("Floor \(level)").tag(level)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    
+                    // Coordinates display
+                    VStack(alignment: .leading) {
+                        Text("Location")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("Lat: \(String(format: "%.6f", coordinate.latitude))")
+                            .font(.system(.caption, design: .monospaced))
+                        Text("Lon: \(String(format: "%.6f", coordinate.longitude))")
+                            .font(.system(.caption, design: .monospaced))
+                    }
+                    .padding()
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(8)
+                }
+                .padding()
+                
+                Spacer()
+                
+                VStack(spacing: 12) {
+                    Button(action: onTestWiFi) {
+                        Label("Test WiFi at this Location", systemImage: "wifi")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    
+                    Button(action: onCancel) {
+                        Text("Cancel")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding()
+            }
+            .navigationBarHidden(true)
+        }
+        .presentationDetents([.medium])
     }
 }
 
